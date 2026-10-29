@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Software Hidrologi Pro - Web</title>
+    <!-- Memanggil Chart.js untuk Grafik -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --success: #27ae60;
+            --danger: #e74c3c;
+            --warning: #f39c12;
+            --info: #3498db;
+            --bg: #f4f7f6;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--primary);
+            margin: 0; padding: 20px;
+            display: flex; justify-content: center;
+        }
+        .container {
+            background: white; padding: 25px; border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            width: 100%; max-width: 600px;
+        }
+        h2 { text-align: center; margin-top: 0; color: var(--primary); }
+        .form-group { margin-bottom: 15px; }
+        label { font-weight: bold; font-size: 14px; display: block; margin-bottom: 5px; }
+        input, select {
+            width: 100%; padding: 10px; border: 1px solid #ccc;
+            border-radius: 5px; box-sizing: border-box; font-size: 14px;
+        }
+        .button-group { display: flex; gap: 10px; margin-top: 20px; margin-bottom: 20px; }
+        button {
+            flex: 1; padding: 12px; border: none; border-radius: 5px;
+            color: white; font-weight: bold; cursor: pointer; font-size: 14px; transition: 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        .btn-hitung { background-color: var(--success); }
+        .btn-reset { background-color: var(--danger); }
+        .btn-csv { background-color: var(--warning); }
+        
+        .hasil-box {
+            background-color: #ecf0f1; padding: 15px; border-radius: 5px;
+            margin-bottom: 20px; display: none;
+        }
+        .hasil-box p { margin: 8px 0; font-size: 15px; }
+        .nilai-q { font-size: 18px; font-weight: bold; color: var(--danger); }
+        
+        /* Area Kanvas Grafik */
+        .chart-container { position: relative; height: 250px; width: 100%; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Kalkulator Hidrologi DAS</h2>
+
+    <div class="form-group">
+        <label>Metode Waktu Konsentrasi (Tc):</label>
+        <select id="metode">
+            <option value="Kirpich">Kirpich</option>
+            <option value="California">California</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label>Panjang Sungai (L) - meter:</label>
+        <input type="number" id="L" placeholder="Contoh: 3500">
+    </div>
+    <div class="form-group">
+        <label>Kemiringan (S) - m/m:</label>
+        <input type="number" id="S" step="0.0001" placeholder="Contoh: 0.028">
+    </div>
+    <div class="form-group">
+        <label>Luas DAS (A) - km²:</label>
+        <input type="number" id="A" step="0.01" placeholder="Contoh: 5.5">
+    </div>
+    <div class="form-group">
+        <label>Koefisien Pengaliran (C):</label>
+        <input type="number" id="C" step="0.01" placeholder="Contoh: 0.65">
+    </div>
+    <div class="form-group">
+        <label>Curah Hujan Maks (R24) - mm:</label>
+        <input type="number" id="R24" placeholder="Contoh: 120">
+    </div>
+
+    <div class="button-group">
+        <button class="btn-hitung" onclick="hitungSemua()">Hitung</button>
+        <button class="btn-reset" onclick="resetSemua()">Reset</button>
+        <button class="btn-csv" onclick="simpanCSV()">Simpan CSV</button>
+    </div>
+
+    <div class="hasil-box" id="areaHasil">
+        <p><strong>Waktu Konsentrasi (Tc):</strong> <span id="outTc"></span> menit</p>
+        <p><strong>Intensitas Hujan (I):</strong> <span id="outI"></span> mm/jam</p>
+        <p class="nilai-q">Debit Puncak (Q): <span id="outQ"></span> m³/s</p>
+        <p><strong>Karakteristik:</strong> <span id="outRespon"></span></p>
+    </div>
+
+    <div class="chart-container" id="areaGrafik">
+        <canvas id="grafikHidrograf"></canvas>
+    </div>
+</div>
+
+<script>
+    let grafikApp = null; // Variabel penyimpan grafik
+    let dataTerakhir = null; // Penyimpan data untuk CSV
+
+    function hitungSemua() {
+        let metode = document.getElementById('metode').value;
+        let L = parseFloat(document.getElementById('L').value);
+        let S = parseFloat(document.getElementById('S').value);
+        let A = parseFloat(document.getElementById('A').value);
+        let C = parseFloat(document.getElementById('C').value);
+        let R24 = parseFloat(document.getElementById('R24').value);
+
+        if (!L || !S || !A || !C || !R24 || L<=0 || S<=0 || A<=0 || C<=0 || R24<=0) {
+            alert("Mohon isi semua data dengan angka lebih dari 0.");
+            return;
+        }
+        if (C > 1) {
+            alert("Nilai Koefisien (C) maksimal 1."); return;
+        }
+
+        // 1. Hitung Tc
+        let tc_menit = 0;
+        if (metode === "Kirpich") {
+            tc_menit = 0.0195 * Math.pow(L, 0.77) * Math.pow(S, -0.385);
+        } else {
+            let L_km = L / 1000;
+            let H = L * S;
+            let tc_jam = Math.pow((0.87 * Math.pow(L_km, 3) / H), 0.385);
+            tc_menit = tc_jam * 60;
+        }
+
+        // 2. Hitung I & Q
+        let tc_jam_calc = tc_menit / 60;
+        let I = (R24 / 24) * Math.pow((24 / tc_jam_calc), 2/3);
+        let Q = 0.278 * C * I * A;
+
+        // 3. Logika Respon & Warna
+        let respon = ""; let warna = "";
+        if (tc_menit < 60) { respon = "Sangat Cepat"; warna = "#e74c3c"; } // Merah
+        else if (tc_menit <= 360) { respon = "Sedang"; warna = "#f39c12"; } // Kuning
+        else { respon = "Lambat"; warna = "#3498db"; } // Biru
+
+        // 4. Tampilkan Teks
+        document.getElementById('outTc').innerText = tc_menit.toFixed(2);
+        document.getElementById('outI').innerText = I.toFixed(2);
+        document.getElementById('outQ').innerText = Q.toFixed(2);
+        document.getElementById('outRespon').innerText = respon;
+        document.getElementById('outRespon').style.color = warna;
+        document.getElementById('areaHasil').style.display = "block";
+        document.getElementById('areaGrafik').style.display = "block";
+
+        // Simpan data untuk CSV
+        dataTerakhir = {
+            "Metode": metode, "Panjang(m)": L, "Kemiringan": S, "Luas(km2)": A, "Koefisien": C, 
+            "CurahHujan(mm)": R24, "Tc(menit)": tc_menit.toFixed(2), 
+            "Intensitas(mm/jam)": I.toFixed(2), "Debit(m3/s)": Q.toFixed(2)
+        };
+
+        // 5. Gambar Grafik Hidrograf dengan Chart.js
+        let ctx = document.getElementById('grafikHidrograf').getContext('2d');
+        
+        // Hancurkan grafik lama jika ada (agar tidak menumpuk)
+        if (grafikApp != null) { grafikApp.destroy(); }
+
+        grafikApp = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [0, tc_menit.toFixed(1), (tc_menit * 3).toFixed(1)],
+                datasets: [{
+                    label: 'Debit Air (m³/s)',
+                    data: [0, Q.toFixed(2), 0],
+                    borderColor: warna,
+                    backgroundColor: warna + '40', // 40 di hex = opacity 25%
+                    borderWidth: 3,
+                    pointRadius: 5,
+                    fill: true,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { title: { display: true, text: 'Hidrograf Banjir - Respon ' + respon } },
+                scales: {
+                    x: { title: { display: true, text: 'Waktu (Menit)' } },
+                    y: { title: { display: true, text: 'Debit Puncak (m³/s)' }, beginAtZero: true }
+                }
+            }
+        });
+    }
+
+    function resetSemua() {
+        document.getElementById('L').value = "";
+        document.getElementById('S').value = "";
+        document.getElementById('A').value = "";
+        document.getElementById('C').value = "";
+        document.getElementById('R24').value = "";
+        document.getElementById('areaHasil').style.display = "none";
+        document.getElementById('areaGrafik').style.display = "none";
+        dataTerakhir = null;
+    }
+
+    function simpanCSV() {
+        if (!dataTerakhir) {
+            alert("Lakukan perhitungan terlebih dahulu!"); return;
+        }
+        
+        let header = Object.keys(dataTerakhir).join(";") + "\n";
+        let row = Object.values(dataTerakhir).join(";") + "\n";
+        let csvContent = "data:text/csv;charset=utf-8," + header + row;
+
+        // Membuat link unduhan otomatis
+        let encodedUri = encodeURI(csvContent);
+        let link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "Laporan_Hidrologi.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+
+</body>
+</html>
